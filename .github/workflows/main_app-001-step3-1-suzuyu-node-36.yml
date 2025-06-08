@@ -1,74 +1,85 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy Node.js app to Azure Web App - app-001-step3-1-suzuyu-node-36
+# .github/workflows/azure-nextjs.yml
+name: CI/CD – Next.js → Azure App Service
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ main ]          # デプロイ対象ブランチを変更する場合はここを修正
+
+env:
+  NODE_VERSION: 20
 
 jobs:
+  # ------------------------------------------------------------
+  # 1. BUILD
+  # ------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read #This is required for actions/checkout
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js version
+      - name: Setup Node
         uses: actions/setup-node@v3
         with:
-          node-version: '20.x'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      - name: npm install, build, and test
-      #1
-        env:
-          NEXT_PUBLIC_API_ENDPOINT: ${{ secrets.NEXT_PUBLIC_API_ENDPOINT }}
-        run: |
-          npm install
-          npm run build --if-present
-          npm run test --if-present
-      
-      #2
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        run: npm run build      # `.next` フォルダが生成される
+
       - name: Copy artifact for deployment job
         run: |
-          mkdir deploy
-          cp -r ./.next/standalone/. ./deploy
-          cp -r ./.next/static/. ./deploy/.next/static
+          # deploy フォルダを作成（ネストもまとめて）
+          mkdir -p deploy/.next
 
-      - name: Zip artifact for deployment
-        run: zip release.zip ./deploy -r #3
+          # 1) アプリ本体
+          if [ -d ".next/standalone" ]; then
+            cp -R .next/standalone/* deploy/
+          else
+            cp -R .next/* deploy/.next/
+          fi
+
+          # 2) 静的アセット
+          cp -R .next/static deploy/.next/
+
+          # 3) public フォルダ（存在すれば）
+          if [ -d public ]; then cp -R public deploy/; fi
+
+          # 4) package.json と lockfile（存在すれば）
+          cp package.json deploy/
+          if [ -f package-lock.json ]; then cp package-lock.json deploy/; fi
+
+      - name: Archive artifact
+        run: |
+          cd deploy
+          zip -r ../release.zip .
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
-          name: node-app
+          name: release-zip
           path: release.zip
 
+  # ------------------------------------------------------------
+  # 2. DEPLOY
+  # ------------------------------------------------------------
   deploy:
-    runs-on: ubuntu-latest
     needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
-    
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Download artifact from build job
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: node-app
+          name: release-zip
 
-      - name: Unzip artifact for deployment
-        run: unzip release.zip
-      
-      - name: 'Deploy to Azure Web App'
-        id: deploy-to-webapp
-        uses: azure/webapps-deploy@v3
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
         with:
-          app-name: 'app-001-step3-1-suzuyu-node-36'
-          slot-name: 'Production'
-          package: ./deploy #4
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_DFDAAA1253A44E32A837B8EE52C3A4D5 }}
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
+          package: release.zip
