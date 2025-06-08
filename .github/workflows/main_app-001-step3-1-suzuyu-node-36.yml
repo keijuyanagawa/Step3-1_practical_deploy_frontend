@@ -3,15 +3,15 @@ name: CI/CD – Next.js → Azure App Service
 
 on:
   push:
-    branches: [ main ]          # デプロイ対象ブランチを変更する場合はここを修正
+    branches: [ main ]          # 必要なら変更
 
 env:
   NODE_VERSION: 20
 
 jobs:
-  # ------------------------------------------------------------
-  # 1. BUILD
-  # ------------------------------------------------------------
+# ------------------------------------------------------------
+# 1. BUILD
+# ------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
 
@@ -29,27 +29,26 @@ jobs:
         run: npm ci
 
       - name: Build Next.js
-        run: npm run build      # `.next` フォルダが生成される
+        run: npm run build        # .next/standalone が生成される
 
       - name: Copy artifact for deployment job
         run: |
-          # deploy フォルダを作成（ネストもまとめて）
+          # deploy フォルダを準備
           mkdir -p deploy/.next
 
           # 1) アプリ本体
           if [ -d ".next/standalone" ]; then
-            cp -R .next/standalone/* deploy/
+            echo "Standalone build found; copying including hidden files"
+            cp -R .next/standalone/.  deploy/
           else
-            cp -R .next/* deploy/.next/
+            echo "::warning::.next/standalone not found – copying full .next"
+            cp -R .next/.  deploy/.next/
           fi
 
-          # 2) 静的アセット
+          # 2) 静的アセット（念のため上書き）
           cp -R .next/static deploy/.next/
 
-          # 3) public フォルダ（存在すれば）
-          if [ -d public ]; then cp -R public deploy/; fi
-
-          # 4) package.json と lockfile（存在すれば）
+          # 3) package.json と lockfile
           cp package.json deploy/
           if [ -f package-lock.json ]; then cp package-lock.json deploy/; fi
 
@@ -58,15 +57,15 @@ jobs:
           cd deploy
           zip -r ../release.zip .
 
-      - name: Upload artifact for deployment job
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-zip
           path: release.zip
 
-  # ------------------------------------------------------------
-  # 2. DEPLOY
-  # ------------------------------------------------------------
+# ------------------------------------------------------------
+# 2. DEPLOY
+# ------------------------------------------------------------
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -80,6 +79,6 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
+          app-name:        ${{ secrets.AZURE_WEBAPP_NAME }}      # Web App 名
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}  # Publish Profile XML を登録したシークレット
           package: release.zip
